@@ -6,6 +6,7 @@ import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.entity.player.Abilities;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.level.GameRules;
 
 public final class SmartZombiePlayerData {
@@ -74,6 +75,12 @@ public final class SmartZombiePlayerData {
 
     public void addExhaustion(float amount) {
         exhaustionLevel = Math.min(exhaustionLevel + amount, 40.0F);
+    }
+
+    public void eat(FoodProperties food) {
+        foodLevel = Math.min(foodLevel + food.getNutrition(), 20);
+        saturationLevel = Math.min(saturationLevel
+                + (float) food.getNutrition() * food.getSaturationModifier() * 2.0F, foodLevel);
     }
 
     public CompoundTag save() {
@@ -160,6 +167,10 @@ public final class SmartZombiePlayerData {
 
     public int selectedHotbarSlot() {
         return selectedHotbarSlot;
+    }
+
+    public void setSelectedHotbarSlot(int slot) {
+        selectedHotbarSlot = Math.max(0, Math.min(8, slot));
     }
 
     public int experienceLevel() {

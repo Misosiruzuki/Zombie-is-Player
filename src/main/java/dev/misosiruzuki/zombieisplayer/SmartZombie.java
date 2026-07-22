@@ -14,6 +14,8 @@ import net.minecraft.world.entity.SpawnGroupData;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Zombie;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.ZombieAttackGoal;
 import net.minecraft.world.entity.player.Player;
@@ -32,6 +34,7 @@ import javax.annotation.Nullable;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
 
 public final class SmartZombie extends Zombie {
     private static final String PLAYER_DATA_TAG = "ZombieIsPlayerData";
@@ -42,6 +45,7 @@ public final class SmartZombie extends Zombie {
     private static final double PLAYER_VIEW_DOT_THRESHOLD = Math.cos(Math.toRadians(45.0D));
     private static final EntityDataAccessor<Boolean> COMBAT_MODE =
             SynchedEntityData.defineId(SmartZombie.class, EntityDataSerializers.BOOLEAN);
+    private static final UUID CRITICAL_DAMAGE_UUID = UUID.fromString("f92d73b0-352d-4afc-b7fb-127fdccdc94a");
 
     private final SmartZombiePlayerData playerData = new SmartZombiePlayerData();
     private final Set<Long> forcedChunks = new HashSet<>();
@@ -51,6 +55,8 @@ public final class SmartZombie extends Zombie {
     private int ticksSinceSeenByPlayer = ACTION_MODE_DELAY_TICKS;
     private int attackStrengthTicker;
     private ItemStack lastItemInMainHand = ItemStack.EMPTY;
+    private boolean nextAttackCritical;
+    private int previousHurtTime;
 
     public SmartZombie(EntityType<? extends Zombie> entityType, Level level) {
         super(entityType, level);
@@ -85,11 +91,19 @@ public final class SmartZombie extends Zombie {
         }
         super.tick();
         if (!level().isClientSide) {
+            tickJumpReset();
             tickPlayerState();
             if (tickCount % 20 == 1) {
                 refreshForcedChunks();
             }
         }
+    }
+
+    private void tickJumpReset() {
+        if (isCombatMode() && hurtTime > previousHurtTime && onGround() && random.nextFloat() < 0.65F) {
+            jumpFromGround();
+        }
+        previousHurtTime = hurtTime;
     }
 
     private void tickAttackStrength() {
@@ -114,6 +128,10 @@ public final class SmartZombie extends Zombie {
 
     public void resetAttackStrengthTicker() {
         attackStrengthTicker = 0;
+    }
+
+    public void prepareCriticalAttack() {
+        nextAttackCritical = true;
     }
 
     private void tickAwarenessMode() {
@@ -214,10 +232,35 @@ public final class SmartZombie extends Zombie {
         if (!isCombatMode()) {
             return false;
         }
-        boolean hit = super.doHurtTarget(target);
+        AttributeInstance attackDamage = getAttribute(Attributes.ATTACK_DAMAGE);
+        AttributeModifier criticalModifier = null;
+        if (nextAttackCritical && attackDamage != null) {
+            criticalModifier = new AttributeModifier(
+                    CRITICAL_DAMAGE_UUID, "Smart zombie critical attack", 0.5D,
+                    AttributeModifier.Operation.MULTIPLY_TOTAL);
+            attackDamage.removeModifier(CRITICAL_DAMAGE_UUID);
+            attackDamage.addTransientModifier(criticalModifier);
+        }
+
+        boolean hit;
+        try {
+            hit = super.doHurtTarget(target);
+        } finally {
+            if (criticalModifier != null) {
+                attackDamage.removeModifier(CRITICAL_DAMAGE_UUID);
+            }
+            nextAttackCritical = false;
+        }
         if (hit && !level().isClientSide) {
             resetAttackStrengthTicker();
             playerData.addExhaustion(0.1F);
+            if (isSprinting() && target instanceof LivingEntity livingTarget) {
+                livingTarget.knockback(0.5D,
+                        net.minecraft.util.Mth.sin(getYRot() * ((float) Math.PI / 180.0F)),
+                        -net.minecraft.util.Mth.cos(getYRot() * ((float) Math.PI / 180.0F)));
+            }
+            getMainHandItem().hurtAndBreak(1, this,
+                    zombie -> zombie.broadcastBreakEvent(net.minecraft.world.InteractionHand.MAIN_HAND));
         }
         return hit;
     }
