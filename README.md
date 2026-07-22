@@ -11,6 +11,7 @@ Development will begin after the shared Forge workspace and VoxPilot test workfl
 - Java 17
 - Automated playtesting with [VoxPilot](https://github.com/Misosiruzuki/VoxPilot)
 - Reproducible lightweight development profile documented in [PERFORMANCE.md](PERFORMANCE.md)
+- Pinned 8x8 resource-pack profile documented in [RESOURCE_PACKS.md](RESOURCE_PACKS.md)
 
 ## Setup
 
@@ -19,6 +20,7 @@ Use Java 17, then run:
 ```powershell
 .\gradlew.bat build
 .\gradlew.bat installClientPerformanceMods installServerPerformanceMods
+.\gradlew.bat enableLightweightResourcePack
 .\gradlew.bat genIntellijRuns
 ```
 

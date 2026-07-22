@@ -1,3 +1,5 @@
+import java.security.MessageDigest
+
 plugins {
     id 'eclipse'
     id 'idea'
@@ -80,6 +82,24 @@ dependencies {
 
 def clientPerformanceDir = layout.projectDirectory.dir('run/client/mods')
 def serverPerformanceDir = layout.projectDirectory.dir('run/server/mods')
+def clientResourcePackDir = layout.projectDirectory.dir('run/client/resourcepacks')
+def clientOptionsFile = layout.projectDirectory.file('run/client/options.txt')
+def lightweightResourcePackName = 'F8thful-6.0.zip'
+def lightweightResourcePackUrl = 'https://cdn.modrinth.com/data/ZrW0og1b/versions/ZBRsqwX2/F8thful.zip'
+def lightweightResourcePackSha512 = '6f612a94b04bcd140202d6cbbd55dc572d250e4c1ed91604a21909ab0f90469e0bb477bd7800970b15458d98db0fcaf1e900aaea6fe7b44a1a47aad3e75f5cac'
+
+def setClientResourcePacks = { List<String> packs ->
+    def options = clientOptionsFile.asFile
+    options.parentFile.mkdirs()
+    def lines = options.exists() ? options.readLines('UTF-8') : []
+    def resourceLine = "resourcePacks:${groovy.json.JsonOutput.toJson(packs)}"
+    def incompatibleLine = 'incompatibleResourcePacks:[]'
+    def resourceIndex = lines.findIndexOf { it.startsWith('resourcePacks:') }
+    def incompatibleIndex = lines.findIndexOf { it.startsWith('incompatibleResourcePacks:') }
+    if (resourceIndex >= 0) lines[resourceIndex] = resourceLine else lines.add(resourceLine)
+    if (incompatibleIndex >= 0) lines[incompatibleIndex] = incompatibleLine else lines.add(incompatibleLine)
+    options.setText(lines.join(System.lineSeparator()) + System.lineSeparator(), 'UTF-8')
+}
 
 tasks.register('installClientPerformanceMods', Copy) {
     group = 'zombie is player setup'
@@ -96,7 +116,44 @@ tasks.register('installServerPerformanceMods', Copy) {
     into serverPerformanceDir
 }
 
+tasks.register('installClientResourcePacks') {
+    group = 'zombie is player setup'
+    description = 'Downloads and verifies the pinned lightweight client resource pack.'
+    def outputFile = clientResourcePackDir.file(lightweightResourcePackName)
+    outputs.file(outputFile)
+    doLast {
+        def target = outputFile.asFile
+        target.parentFile.mkdirs()
+        if (!target.exists()) {
+            target.bytes = new URI(lightweightResourcePackUrl).toURL().bytes
+        }
+        def actualSha512 = MessageDigest.getInstance('SHA-512').digest(target.bytes).encodeHex().toString()
+        if (actualSha512 != lightweightResourcePackSha512) {
+            target.delete()
+            throw new GradleException("Resource-pack checksum mismatch: ${actualSha512}")
+        }
+    }
+}
+
+tasks.register('enableLightweightResourcePack') {
+    group = 'zombie is player setup'
+    description = 'Enables F8thful 8x8 for lightweight automated test runs.'
+    dependsOn 'installClientResourcePacks'
+    doLast {
+        setClientResourcePacks(['vanilla', 'mod_resources', "file/${lightweightResourcePackName}"])
+    }
+}
+
+tasks.register('useVanillaResourcePacks') {
+    group = 'zombie is player setup'
+    description = 'Switches back to vanilla resources for visual-correctness comparisons.'
+    doLast {
+        setClientResourcePacks(['vanilla', 'mod_resources'])
+    }
+}
+
 tasks.matching { it.name == 'prepareRunClient' }.configureEach { dependsOn 'installClientPerformanceMods' }
+tasks.matching { it.name == 'prepareRunClient' }.configureEach { dependsOn 'installClientResourcePacks' }
 tasks.matching { it.name == 'prepareRunServer' }.configureEach { dependsOn 'installServerPerformanceMods' }
 tasks.matching { it.name == 'prepareRunGameTestServer' }.configureEach { dependsOn 'installServerPerformanceMods' }
 
