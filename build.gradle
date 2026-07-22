@@ -31,6 +31,9 @@ minecraft {
 
         client {
             workingDirectory project.file('run/client')
+            if (project.hasProperty('quickPlayServer')) {
+                args '--quickPlayMultiplayer', project.property('quickPlayServer')
+            }
         }
 
         server {
