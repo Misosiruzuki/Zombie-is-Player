@@ -1,6 +1,7 @@
 package dev.misosiruzuki.zombieisplayer;
 
 import dev.misosiruzuki.zombieisplayer.ai.PlayerAttackGoal;
+import dev.misosiruzuki.zombieisplayer.ai.SurvivalActionGoal;
 import dev.misosiruzuki.zombieisplayer.config.ModConfig;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
@@ -67,6 +68,7 @@ public final class SmartZombie extends Zombie {
     public static AttributeSupplier.Builder createAttributes() {
         return Zombie.createAttributes()
                 .add(Attributes.ATTACK_SPEED)
+                .add(ForgeMod.BLOCK_REACH.get())
                 .add(ForgeMod.ENTITY_REACH.get());
     }
 
@@ -75,6 +77,7 @@ public final class SmartZombie extends Zombie {
         super.addBehaviourGoals();
         goalSelector.removeAllGoals(goal -> goal instanceof ZombieAttackGoal);
         goalSelector.addGoal(2, new PlayerAttackGoal(this, 1.0D, false));
+        goalSelector.addGoal(3, new SurvivalActionGoal(this));
     }
 
     @Override

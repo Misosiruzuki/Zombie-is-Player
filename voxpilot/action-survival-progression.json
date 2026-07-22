@@ -1,0 +1,26 @@
+{
+  "name": "smart-zombie-action-survival-progression",
+  "launchServer": true,
+  "totalFrames": 1800,
+  "captureEvery": 100,
+  "warmupFrames": 40,
+  "closeClient": true,
+  "display": { "background": true },
+  "commands": [
+    "time set night",
+    "weather clear",
+    "gamemode spectator Dev",
+    "effect give Dev minecraft:night_vision infinite 0 true",
+    "tp Dev 0 -54 14 180 28",
+    "fill -12 -61 -12 12 -61 12 minecraft:grass_block",
+    "fill 3 -60 -1 4 -56 1 minecraft:oak_log",
+    "fill 6 -60 -3 11 -58 1 minecraft:stone",
+    "fill 6 -60 4 11 -58 5 minecraft:iron_ore",
+    "summon zombieisplayer:smart_zombie 0 -60 0 {PersistenceRequired:1b,ZombieIsPlayerData:{Inventory:[{Slot:0b,id:\"minecraft:stone_axe\",Count:1b},{Slot:1b,id:\"minecraft:wooden_pickaxe\",Count:1b},{Slot:2b,id:\"minecraft:cobblestone\",Count:12b}]}}"
+  ],
+  "actions": [
+    { "fromFrame": 0, "toFrame": 599, "camera": "first" },
+    { "fromFrame": 600, "toFrame": 1199, "camera": "third_back" },
+    { "fromFrame": 1200, "toFrame": 1799, "camera": "third_front" }
+  ]
+}
