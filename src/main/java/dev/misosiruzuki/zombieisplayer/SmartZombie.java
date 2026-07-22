@@ -1,19 +1,26 @@
 package dev.misosiruzuki.zombieisplayer;
 
 import dev.misosiruzuki.zombieisplayer.config.ModConfig;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MobSpawnType;
 import net.minecraft.world.entity.SpawnGroupData;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.RelativeMovement;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.common.world.ForgeChunkManager;
 
 import javax.annotation.Nullable;
@@ -23,12 +30,20 @@ import java.util.Set;
 
 public final class SmartZombie extends Zombie {
     private static final String PLAYER_DATA_TAG = "ZombieIsPlayerData";
+    private static final String COMBAT_MODE_TAG = "CombatMode";
+    private static final String UNSEEN_TICKS_TAG = "TicksSinceSeen";
+    private static final int ACTION_MODE_DELAY_TICKS = 20 * 60;
+    private static final double PLAYER_VIEW_DISTANCE = 64.0D;
+    private static final double PLAYER_VIEW_DOT_THRESHOLD = Math.cos(Math.toRadians(45.0D));
+    private static final EntityDataAccessor<Boolean> COMBAT_MODE =
+            SynchedEntityData.defineId(SmartZombie.class, EntityDataSerializers.BOOLEAN);
 
     private final SmartZombiePlayerData playerData = new SmartZombiePlayerData();
     private final Set<Long> forcedChunks = new HashSet<>();
     private double lastFoodX;
     private double lastFoodZ;
     private boolean hasFoodPosition;
+    private int ticksSinceSeenByPlayer = ACTION_MODE_DELAY_TICKS;
 
     public SmartZombie(EntityType<? extends Zombie> entityType, Level level) {
         super(entityType, level);
@@ -37,7 +52,16 @@ public final class SmartZombie extends Zombie {
     }
 
     @Override
+    protected void defineSynchedData() {
+        super.defineSynchedData();
+        entityData.define(COMBAT_MODE, false);
+    }
+
+    @Override
     public void tick() {
+        if (!level().isClientSide) {
+            tickAwarenessMode();
+        }
         super.tick();
         if (!level().isClientSide) {
             tickPlayerState();
@@ -45,6 +69,65 @@ public final class SmartZombie extends Zombie {
                 refreshForcedChunks();
             }
         }
+    }
+
+    private void tickAwarenessMode() {
+        ServerPlayer watchingPlayer = findWatchingPlayer();
+        if (watchingPlayer != null) {
+            ticksSinceSeenByPlayer = 0;
+            setCombatMode(true);
+            if (getTarget() == null || !getTarget().isAlive()) {
+                setTarget(watchingPlayer);
+            }
+            return;
+        }
+
+        if (isCombatMode() && ++ticksSinceSeenByPlayer >= ACTION_MODE_DELAY_TICKS) {
+            setCombatMode(false);
+        }
+    }
+
+    @Nullable
+    private ServerPlayer findWatchingPlayer() {
+        if (!(level() instanceof ServerLevel serverLevel)) {
+            return null;
+        }
+
+        ServerPlayer closest = null;
+        double closestDistanceSquared = PLAYER_VIEW_DISTANCE * PLAYER_VIEW_DISTANCE;
+        Vec3 targetPoint = getEyePosition();
+        for (ServerPlayer player : serverLevel.players()) {
+            if (!player.isAlive() || player.isSpectator()) {
+                continue;
+            }
+            Vec3 toZombie = targetPoint.subtract(player.getEyePosition());
+            double distanceSquared = toZombie.lengthSqr();
+            if (distanceSquared > closestDistanceSquared || distanceSquared < 1.0E-6D) {
+                continue;
+            }
+            double viewDot = player.getViewVector(1.0F).dot(toZombie.normalize());
+            if (viewDot >= PLAYER_VIEW_DOT_THRESHOLD && player.hasLineOfSight(this)) {
+                closest = player;
+                closestDistanceSquared = distanceSquared;
+            }
+        }
+        return closest;
+    }
+
+    private void setCombatMode(boolean combatMode) {
+        if (entityData.get(COMBAT_MODE) == combatMode) {
+            return;
+        }
+        entityData.set(COMBAT_MODE, combatMode);
+        if (!combatMode) {
+            super.setTarget(null);
+            setAggressive(false);
+            getNavigation().stop();
+        }
+    }
+
+    public boolean isCombatMode() {
+        return entityData.get(COMBAT_MODE);
     }
 
     @Override
@@ -83,11 +166,33 @@ public final class SmartZombie extends Zombie {
 
     @Override
     public boolean doHurtTarget(Entity target) {
+        if (!isCombatMode()) {
+            return false;
+        }
         boolean hit = super.doHurtTarget(target);
         if (hit && !level().isClientSide) {
             playerData.addExhaustion(0.1F);
         }
         return hit;
+    }
+
+    @Override
+    public boolean canAttack(LivingEntity target) {
+        return isCombatMode() && super.canAttack(target);
+    }
+
+    @Override
+    public void setTarget(@Nullable LivingEntity target) {
+        if (target != null && !isCombatMode()) {
+            super.setTarget(null);
+            return;
+        }
+        super.setTarget(target);
+    }
+
+    @Override
+    public boolean isPreventingPlayerRest(Player player) {
+        return isCombatMode() && super.isPreventingPlayerRest(player);
     }
 
     @Override
@@ -211,6 +316,8 @@ public final class SmartZombie extends Zombie {
     public void addAdditionalSaveData(CompoundTag tag) {
         super.addAdditionalSaveData(tag);
         tag.put(PLAYER_DATA_TAG, playerData.save());
+        tag.putBoolean(COMBAT_MODE_TAG, isCombatMode());
+        tag.putInt(UNSEEN_TICKS_TAG, ticksSinceSeenByPlayer);
     }
 
     @Override
@@ -220,6 +327,12 @@ public final class SmartZombie extends Zombie {
         setCanPickUpLoot(true);
         if (tag.contains(PLAYER_DATA_TAG, CompoundTag.TAG_COMPOUND)) {
             playerData.load(tag.getCompound(PLAYER_DATA_TAG));
+        }
+        entityData.set(COMBAT_MODE, tag.getBoolean(COMBAT_MODE_TAG));
+        ticksSinceSeenByPlayer = Math.max(0, Math.min(ACTION_MODE_DELAY_TICKS, tag.getInt(UNSEEN_TICKS_TAG)));
+        if (!isCombatMode()) {
+            super.setTarget(null);
+            setAggressive(false);
         }
     }
 
