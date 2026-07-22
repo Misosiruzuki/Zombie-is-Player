@@ -3,6 +3,9 @@ build/
 run/
 .idea/
 *.iml
+.classpath
+.project
+.settings/
 *.log
 crash-reports/
 logs/
