@@ -16,6 +16,7 @@ Zombie is Player is a Minecraft Forge 1.20.1 mod currently under development.
 - Returns to action mode after being outside every player's view for 60 seconds. Action mode blocks targeting, retaliation, attacks and sleep prevention.
 - Uses the player's charged-attack cooldown formula. Main-hand item attack-speed modifiers control its attack interval, and its hit checks use the player's entity-reach attribute.
 - Combat mode follows the supplied Minecraft 1.20.1 PvP guide: spacing, smooth aim, strafing, sprint resets, shield timing, axe shield-punishes, selective critical hits, armor/weapon hot-swaps, recovery/retreat, totems and bow pressure. See [PVP_AI.md](PVP_AI.md).
+- Advanced inventory tactics include real crossbow loading (arrows, fireworks, Multishot and Piercing), Smart Zombie ender-pearl teleportation, and `mobGriefing`-aware water/lava bucket placement with source recovery.
 
 The generated `config/zombieisplayer-common.toml` contains:
 
@@ -51,4 +52,4 @@ The client and dedicated server have separate run directories so client-only ren
 
 ## Status
 
-Smart Zombie 0.5.0-dev and the optimized Forge development profile are verified on both the dedicated server and rendered client.
+Smart Zombie 0.6.0-dev and the optimized Forge development profile are verified on both the dedicated server and rendered client.

@@ -1,6 +1,13 @@
 package dev.misosiruzuki.zombieisplayer.ai;
 
 import dev.misosiruzuki.zombieisplayer.SmartZombie;
+import dev.misosiruzuki.zombieisplayer.entity.SmartZombiePearl;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.SimpleContainer;
@@ -24,6 +31,12 @@ import net.minecraft.world.item.PotionItem;
 import net.minecraft.world.item.ShieldItem;
 import net.minecraft.world.item.SwordItem;
 import net.minecraft.world.item.alchemy.PotionUtils;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
+import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.level.GameRules;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.common.ForgeMod;
 
@@ -50,6 +63,11 @@ public final class PlayerAttackGoal extends Goal {
     private int criticalTicks;
     private int rangedChargeTicks;
     private int rangedCooldownTicks;
+    private int pearlCooldownTicks;
+    private int fluidActionCooldownTicks;
+    private int fluidPickupTicks;
+    private BlockPos tacticalFluidPos;
+    private boolean tacticalFluidIsLava;
     private int lastTargetSwingTime = -1;
     private boolean pendingCritical;
     private boolean consumingFood;
@@ -91,6 +109,8 @@ public final class PlayerAttackGoal extends Goal {
         consumingFood = false;
         consumedFood = null;
         rangedChargeTicks = 0;
+        fluidPickupTicks = 0;
+        tickFluidRecovery();
     }
 
     @Override
@@ -109,6 +129,13 @@ public final class PlayerAttackGoal extends Goal {
         if (rangedCooldownTicks > 0) {
             --rangedCooldownTicks;
         }
+        if (pearlCooldownTicks > 0) {
+            --pearlCooldownTicks;
+        }
+        if (fluidActionCooldownTicks > 0) {
+            --fluidActionCooldownTicks;
+        }
+        tickFluidRecovery();
         if (--strafeTicks <= 0) {
             strafeDirection = -strafeDirection;
             strafeTicks = 25 + smartZombie.getRandom().nextInt(35);
@@ -128,6 +155,11 @@ public final class PlayerAttackGoal extends Goal {
 
         if (shouldRetreat()) {
             equipTotemIfCritical();
+            if (tryThrowEnderPearl(target, true)) {
+                retreatFrom(target, 1.25D);
+                return;
+            }
+            tryPlaceWater(target);
             if (tryUseRecoveryItem()) {
                 retreatFrom(target, 1.25D);
                 return;
@@ -139,6 +171,20 @@ public final class PlayerAttackGoal extends Goal {
 
         if (distance > 8.0D && tryUsePreparationPotion()) {
             retreatFrom(target, 1.0D);
+            return;
+        }
+
+        if (distance > 14.0D && target.getHealth() <= target.getMaxHealth() * 0.25F
+                && tryThrowEnderPearl(target, false)) {
+            return;
+        }
+
+        if (distance <= 4.5D && tryPlaceLava(target)) {
+            circleStrafe(-0.5F, 0.6F * strafeDirection);
+            return;
+        }
+
+        if ((smartZombie.isOnFire() || smartZombie.fallDistance > 3.0F) && tryPlaceWater(target)) {
             return;
         }
 
@@ -389,6 +435,11 @@ public final class PlayerAttackGoal extends Goal {
             if (weaponSlot < 0 || !equipFromInventory(weaponSlot, EquipmentSlot.MAINHAND)) {
                 return false;
             }
+            held = smartZombie.getMainHandItem();
+        }
+
+        if (held.getItem() instanceof CrossbowItem) {
+            return useCrossbow(target, held);
         }
 
         int arrowSlot = findBestInventoryItem(stack -> stack.getItem() instanceof ArrowItem, stack -> 1.0D);
@@ -416,6 +467,214 @@ public final class PlayerAttackGoal extends Goal {
         rangedCooldownTicks = 24;
         smartZombie.swing(InteractionHand.MAIN_HAND);
         return true;
+    }
+
+    private boolean useCrossbow(LivingEntity target, ItemStack crossbow) {
+        if (CrossbowItem.isCharged(crossbow)) {
+            fireCrossbow(target, crossbow);
+            return true;
+        }
+
+        int projectileSlot = findBestInventoryItem(stack -> stack.is(Items.FIREWORK_ROCKET), stack -> 2.0D);
+        if (projectileSlot < 0) {
+            projectileSlot = findBestInventoryItem(stack -> stack.getItem() instanceof ArrowItem, stack -> 1.0D);
+        }
+        if (projectileSlot < 0) {
+            return false;
+        }
+        if (++rangedChargeTicks < CrossbowItem.getChargeDuration(crossbow)) {
+            return true;
+        }
+
+        ItemStack ammunition = smartZombie.playerData().inventory().getItem(projectileSlot);
+        int projectileCount = EnchantmentHelper.getItemEnchantmentLevel(Enchantments.MULTISHOT, crossbow) > 0 ? 3 : 1;
+        ListTag chargedProjectiles = new ListTag();
+        for (int index = 0; index < projectileCount; ++index) {
+            CompoundTag projectileTag = new CompoundTag();
+            ammunition.copyWithCount(1).save(projectileTag);
+            chargedProjectiles.add(projectileTag);
+        }
+        crossbow.getOrCreateTag().put("ChargedProjectiles", chargedProjectiles);
+        CrossbowItem.setCharged(crossbow, true);
+        ammunition.shrink(1);
+        rangedChargeTicks = 0;
+        fireCrossbow(target, crossbow);
+        return true;
+    }
+
+    private void fireCrossbow(LivingEntity target, ItemStack crossbow) {
+        aimDirectlyAt(target);
+        float velocity = CrossbowItem.containsChargedProjectile(crossbow, Items.FIREWORK_ROCKET)
+                ? 1.6F : 3.15F;
+        CrossbowItem.performShooting(smartZombie.level(), smartZombie, InteractionHand.MAIN_HAND,
+                crossbow, velocity, 1.0F);
+        CrossbowItem.setCharged(crossbow, false);
+        rangedChargeTicks = 0;
+        rangedCooldownTicks = 24;
+        smartZombie.swing(InteractionHand.MAIN_HAND);
+    }
+
+    private void aimDirectlyAt(LivingEntity target) {
+        Vec3 direction = target.getEyePosition().add(target.getDeltaMovement().scale(0.35D))
+                .subtract(smartZombie.getEyePosition());
+        double horizontal = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
+        float yaw = (float) (Mth.atan2(direction.z, direction.x) * (180.0D / Math.PI)) - 90.0F;
+        float pitch = (float) (-(Mth.atan2(direction.y, horizontal) * (180.0D / Math.PI)));
+        smartZombie.setYRot(yaw);
+        smartZombie.setYHeadRot(yaw);
+        smartZombie.setXRot(pitch);
+    }
+
+    private boolean tryThrowEnderPearl(LivingEntity target, boolean retreating) {
+        if (pearlCooldownTicks > 0) {
+            return false;
+        }
+        int pearlSlot = findBestInventoryItem(stack -> stack.is(Items.ENDER_PEARL), stack -> 1.0D);
+        if (pearlSlot < 0) {
+            return false;
+        }
+        SimpleContainer inventory = smartZombie.playerData().inventory();
+        int pearlCount = 0;
+        for (int slot = 0; slot < inventory.getContainerSize(); ++slot) {
+            if (inventory.getItem(slot).is(Items.ENDER_PEARL)) {
+                pearlCount += inventory.getItem(slot).getCount();
+            }
+        }
+        double targetDistance = smartZombie.distanceTo(target);
+        if (retreating) {
+            if (smartZombie.getHealth() > smartZombie.getMaxHealth() * 0.35F
+                    || smartZombie.getHealth() <= 5.0F || targetDistance > 7.0D) {
+                return false;
+            }
+        } else if (pearlCount <= 1) {
+            return false;
+        }
+
+        Vec3 direction;
+        if (retreating) {
+            direction = smartZombie.position().subtract(target.position());
+            direction = new Vec3(direction.x, Math.max(0.35D, direction.horizontalDistance() * 0.08D), direction.z);
+        } else {
+            direction = target.getEyePosition().add(target.getDeltaMovement().scale(0.6D))
+                    .subtract(smartZombie.getEyePosition());
+            direction = direction.add(0.0D, direction.horizontalDistance() * 0.04D, 0.0D);
+        }
+        if (direction.lengthSqr() < 1.0E-4D) {
+            return false;
+        }
+
+        SmartZombiePearl pearl = new SmartZombiePearl(smartZombie.level(), smartZombie);
+        pearl.shoot(direction.x, direction.y, direction.z, 1.5F, 1.0F);
+        smartZombie.level().addFreshEntity(pearl);
+        inventory.getItem(pearlSlot).shrink(1);
+        pearlCooldownTicks = 100;
+        smartZombie.swing(InteractionHand.MAIN_HAND);
+        return true;
+    }
+
+    private boolean tryPlaceWater(LivingEntity target) {
+        if (!canUseTacticalFluid() || smartZombie.level().dimensionType().ultraWarm()) {
+            return false;
+        }
+        int bucketSlot = findBestInventoryItem(stack -> stack.is(Items.WATER_BUCKET), stack -> 1.0D);
+        if (bucketSlot < 0) {
+            return false;
+        }
+
+        BlockPos placePos;
+        if (smartZombie.fallDistance > 3.0F) {
+            BlockPos cursor = smartZombie.blockPosition();
+            placePos = null;
+            for (int depth = 0; depth <= 5; ++depth) {
+                BlockPos ground = cursor.below(depth + 1);
+                if (smartZombie.level().getBlockState(ground).isFaceSturdy(
+                        smartZombie.level(), ground, Direction.UP)) {
+                    placePos = ground.above();
+                    break;
+                }
+            }
+            if (placePos == null) {
+                return false;
+            }
+        } else {
+            placePos = smartZombie.blockPosition();
+            if (!canPlaceFluidAt(placePos)) {
+                Vec3 away = smartZombie.position().subtract(target.position());
+                Direction direction = Direction.getNearest(away.x, 0.0D, away.z);
+                placePos = placePos.relative(direction);
+            }
+        }
+        return placeTacticalFluid(placePos, bucketSlot, false);
+    }
+
+    private boolean tryPlaceLava(LivingEntity target) {
+        if (!canUseTacticalFluid() || target.fireImmune()
+                || smartZombie.distanceToSqr(target) < 6.25D) {
+            return false;
+        }
+        int bucketSlot = findBestInventoryItem(stack -> stack.is(Items.LAVA_BUCKET), stack -> 1.0D);
+        if (bucketSlot < 0) {
+            return false;
+        }
+        Vec3 predicted = target.position().add(target.getDeltaMovement().scale(2.0D));
+        BlockPos placePos = BlockPos.containing(predicted.x, target.getY(), predicted.z);
+        return placeTacticalFluid(placePos, bucketSlot, true);
+    }
+
+    private boolean canUseTacticalFluid() {
+        return fluidActionCooldownTicks <= 0 && tacticalFluidPos == null
+                && smartZombie.level().getGameRules().getBoolean(GameRules.RULE_MOBGRIEFING);
+    }
+
+    private boolean canPlaceFluidAt(BlockPos pos) {
+        BlockState state = smartZombie.level().getBlockState(pos);
+        BlockPos below = pos.below();
+        return state.canBeReplaced() && smartZombie.level().getBlockState(below)
+                .isFaceSturdy(smartZombie.level(), below, Direction.UP);
+    }
+
+    private boolean placeTacticalFluid(BlockPos pos, int inventorySlot, boolean lava) {
+        if (!canPlaceFluidAt(pos)) {
+            return false;
+        }
+        BlockState fluidState = lava ? Blocks.LAVA.defaultBlockState() : Blocks.WATER.defaultBlockState();
+        if (!smartZombie.level().setBlock(pos, fluidState, 3)) {
+            return false;
+        }
+        smartZombie.playerData().inventory().setItem(inventorySlot, new ItemStack(Items.BUCKET));
+        tacticalFluidPos = pos.immutable();
+        tacticalFluidIsLava = lava;
+        fluidPickupTicks = lava ? 60 : 40;
+        fluidActionCooldownTicks = lava ? 120 : 80;
+        smartZombie.level().playSound(null, pos,
+                lava ? SoundEvents.BUCKET_EMPTY_LAVA : SoundEvents.BUCKET_EMPTY,
+                SoundSource.HOSTILE, 1.0F, 1.0F);
+        smartZombie.level().gameEvent(smartZombie, GameEvent.FLUID_PLACE, pos);
+        return true;
+    }
+
+    private void tickFluidRecovery() {
+        if (tacticalFluidPos == null || --fluidPickupTicks > 0) {
+            return;
+        }
+        BlockState state = smartZombie.level().getBlockState(tacticalFluidPos);
+        if (!state.is(tacticalFluidIsLava ? Blocks.LAVA : Blocks.WATER)) {
+            tacticalFluidPos = null;
+            return;
+        }
+        int bucketSlot = findBestInventoryItem(stack -> stack.is(Items.BUCKET), stack -> 1.0D);
+        if (bucketSlot < 0) {
+            fluidPickupTicks = 20;
+            return;
+        }
+        smartZombie.level().setBlock(tacticalFluidPos, Blocks.AIR.defaultBlockState(), 3);
+        smartZombie.playerData().inventory().setItem(bucketSlot,
+                new ItemStack(tacticalFluidIsLava ? Items.LAVA_BUCKET : Items.WATER_BUCKET));
+        smartZombie.level().playSound(null, tacticalFluidPos,
+                tacticalFluidIsLava ? SoundEvents.BUCKET_FILL_LAVA : SoundEvents.BUCKET_FILL,
+                SoundSource.HOSTILE, 1.0F, 1.0F);
+        smartZombie.level().gameEvent(smartZombie, GameEvent.FLUID_PICKUP, tacticalFluidPos);
+        tacticalFluidPos = null;
     }
 
     private void chooseMeleeWeapon(LivingEntity target) {
