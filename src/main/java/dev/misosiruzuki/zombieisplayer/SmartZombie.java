@@ -1,5 +1,6 @@
 package dev.misosiruzuki.zombieisplayer;
 
+import dev.misosiruzuki.zombieisplayer.ai.PlayerAttackGoal;
 import dev.misosiruzuki.zombieisplayer.config.ModConfig;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
@@ -12,6 +13,9 @@ import net.minecraft.world.entity.MobSpawnType;
 import net.minecraft.world.entity.SpawnGroupData;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.goal.ZombieAttackGoal;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
@@ -22,6 +26,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.RelativeMovement;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.common.world.ForgeChunkManager;
+import net.minecraftforge.common.ForgeMod;
 
 import javax.annotation.Nullable;
 
@@ -44,11 +49,26 @@ public final class SmartZombie extends Zombie {
     private double lastFoodZ;
     private boolean hasFoodPosition;
     private int ticksSinceSeenByPlayer = ACTION_MODE_DELAY_TICKS;
+    private int attackStrengthTicker;
+    private ItemStack lastItemInMainHand = ItemStack.EMPTY;
 
     public SmartZombie(EntityType<? extends Zombie> entityType, Level level) {
         super(entityType, level);
         setPersistenceRequired();
         setCanPickUpLoot(true);
+    }
+
+    public static AttributeSupplier.Builder createAttributes() {
+        return Zombie.createAttributes()
+                .add(Attributes.ATTACK_SPEED)
+                .add(ForgeMod.ENTITY_REACH.get());
+    }
+
+    @Override
+    protected void addBehaviourGoals() {
+        super.addBehaviourGoals();
+        goalSelector.removeAllGoals(goal -> goal instanceof ZombieAttackGoal);
+        goalSelector.addGoal(2, new PlayerAttackGoal(this, 1.0D, false));
     }
 
     @Override
@@ -61,6 +81,7 @@ public final class SmartZombie extends Zombie {
     public void tick() {
         if (!level().isClientSide) {
             tickAwarenessMode();
+            tickAttackStrength();
         }
         super.tick();
         if (!level().isClientSide) {
@@ -69,6 +90,30 @@ public final class SmartZombie extends Zombie {
                 refreshForcedChunks();
             }
         }
+    }
+
+    private void tickAttackStrength() {
+        ++attackStrengthTicker;
+        ItemStack currentItem = getMainHandItem();
+        if (!ItemStack.matches(lastItemInMainHand, currentItem)) {
+            if (!ItemStack.isSameItem(lastItemInMainHand, currentItem)) {
+                resetAttackStrengthTicker();
+            }
+            lastItemInMainHand = currentItem.copy();
+        }
+    }
+
+    public float getCurrentItemAttackStrengthDelay() {
+        return (float) (20.0D / getAttributeValue(Attributes.ATTACK_SPEED));
+    }
+
+    public float getAttackStrengthScale(float partialTick) {
+        return net.minecraft.util.Mth.clamp(
+                ((float) attackStrengthTicker + partialTick) / getCurrentItemAttackStrengthDelay(), 0.0F, 1.0F);
+    }
+
+    public void resetAttackStrengthTicker() {
+        attackStrengthTicker = 0;
     }
 
     private void tickAwarenessMode() {
@@ -171,6 +216,7 @@ public final class SmartZombie extends Zombie {
         }
         boolean hit = super.doHurtTarget(target);
         if (hit && !level().isClientSide) {
+            resetAttackStrengthTicker();
             playerData.addExhaustion(0.1F);
         }
         return hit;

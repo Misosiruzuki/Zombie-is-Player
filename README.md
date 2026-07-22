@@ -14,6 +14,7 @@ Zombie is Player is a Minecraft Forge 1.20.1 mod currently under development.
 - Keeps a fully ticking 3x3 chunk area loaded, follows movement and teleportation, survives server restarts, and releases tickets when destroyed.
 - Starts in non-hostile action mode. Entering any player's unobstructed 90-degree view cone within 64 blocks immediately enables combat mode.
 - Returns to action mode after being outside every player's view for 60 seconds. Action mode blocks targeting, retaliation, attacks and sleep prevention.
+- Uses the player's charged-attack cooldown formula. Main-hand item attack-speed modifiers control its attack interval, and its hit checks use the player's entity-reach attribute.
 
 The generated `config/zombieisplayer-common.toml` contains:
 
@@ -49,4 +50,4 @@ The client and dedicated server have separate run directories so client-only ren
 
 ## Status
 
-Smart Zombie 0.3.0-dev and the optimized Forge development profile are verified on both the dedicated server and rendered client.
+Smart Zombie 0.4.0-dev and the optimized Forge development profile are verified on both the dedicated server and rendered client.
